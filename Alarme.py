@@ -4,12 +4,41 @@ from grove.gpio import GPIO
 from grove.grove_led import GroveLed
 from grove.grove_mini_pir_motion_sensor import GroveMiniPIRMotionSensor
 
+from database import init_db, select_sql, insert_sql
+
 
 # --- Configuration des Ports ---
 PIN_PIR = 5       # Le capteur de mouvement (Mini PIR Motion Sensor) sur D5
 PIN_BUZZER = 16   # Buzzer sur D16
 PIN_BUTTON = 18   # Bouton sur D18
 PIN_LED = 22      # LED sur D22
+
+_bdd_initialisee = False
+
+def init_bdd() -> bool:
+    global _bdd_initialisee
+    if _bdd_initialisee:
+        return False
+    init_db()
+    _bdd_initialisee = True
+    return True
+
+
+def lire_etat_alarme_bdd() -> bool:
+    init_bdd()
+    lignes = select_sql("SELECT est_activee FROM etat_alarme WHERE id = 1", ())
+    if not lignes:
+        return False
+    return bool(lignes[0][0])
+
+
+def etat_alarme_et_historique(est_activee: bool):
+    init_bdd()
+    insert_sql("INSERT OR REPLACE INTO etat_alarme (id, est_activee, mise_a_jour_le) VALUES (1, ?, CURRENT_TIMESTAMP)", (1 if est_activee else 0,))
+
+    type_evenement = "Armement" if est_activee else "Désarmement"
+    etat = "ARMÉ" if est_activee else "DÉSARMÉ"
+    insert_sql("INSERT INTO historique_alarme (type_evenement, etat) VALUES (?, ?)", (type_evenement, etat))
 
 
 class EcranLCD:
@@ -47,7 +76,7 @@ class SystemeAlarme:
         self.bouton = GPIO(PIN_BUTTON, GPIO.IN)
         self.led = GroveLed(PIN_LED)
         self.lcd = EcranLCD()
-        self.est_actif = False
+        self.est_actif = lire_etat_alarme_bdd()
         self.sonne = False
         self.duree_sonnerie = 2
         self.debut_sonnerie = 0
@@ -75,10 +104,15 @@ class SystemeAlarme:
             time.sleep(0.1)
             self.buzzer.write(0)
             time.sleep(0.1)
+        if nombre_de_fois == 1:
+            etat_alarme_et_historique(True)
+        else :
+            etat_alarme_et_historique(False)
 
     def action_bouton(self, pin, value):
         if value == 1:
             self.est_actif = not self.est_actif
+
             if self.est_actif == True:
                 print("Système ACTIVÉ")
                 self.led.on()
@@ -92,6 +126,7 @@ class SystemeAlarme:
                 self.lcd.ecrire_texte("Systeme Eteint")
                 self.lcd.changer_couleur(50, 50, 50)
                 self.faire_bip(2)
+
 
     def declencher_sonnerie(self):
         if self.sonne == False:
@@ -115,11 +150,9 @@ class SystemeAlarme:
 
     def demarrer(self):
         self.configurer_duree()
-        
         self.lcd.ecrire_texte("Systeme Eteint")
         self.lcd.changer_couleur(50, 50, 50)
         print("Programme lancé. En attente...")
-
         while True:
             if self.est_actif == True and self.capteur.read() == 1:
                 self.declencher_sonnerie()
@@ -139,5 +172,7 @@ class SystemeAlarme:
             time.sleep(0.1)
 
 
-mon_alarme = SystemeAlarme()
-mon_alarme.demarrer()
+
+if __name__ == "__main__":
+    mon_alarme = SystemeAlarme()
+    mon_alarme.demarrer()
